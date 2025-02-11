@@ -114,9 +114,9 @@ function step(x, start, stop; amplitude = 1.0)
 end
 
 # U0 = 0 .* X .+ 0.2
-# U0 = gaussian.(X, 1 / 2, 1/30, 0.7)
+U0 = gaussian.(X, 1 / 2, 1/30, 0.7)
 # U0 = step.(X, 0.3, 0.4; amplitude=0.2)
-U0 = sinewave.(X, 5, 0.1, 0)
+# U0 = sinewave.(X, 5, 0.1, 0)
 
 function assign_IV(matr, func)
     for i in Base.OneTo(size(matr, 2))
@@ -139,18 +139,34 @@ v = 0
 
 function fin_diff(matr, n, j)
     r = ((k * c) / h)^2
-    if j == 1
+    if n == 1
+        if j == 1
 
-        return 1/2 * (r * matr[n, j+1] + 2 * (1 - r) * matr[n, j] + r * bc_x0- k^2 * v)
+            return 1/2 * (r * matr[n, j+1] + 2 * (1 - r) * matr[n, j] + r * bc_x0- k^2 * v)
 
-    elseif j == size(matr, 2)
+        elseif j == size(matr, 2)
 
-        return 1/2 * (r * bc_xJ + 2 * (1 - r) * matr[n, j] + r * matr[n, j - 1]- k^2 * v)
+            return 1/2 * (r * bc_xJ + 2 * (1 - r) * matr[n, j] + r * matr[n, j - 1]- k^2 * v)
 
+        else
+
+            return 1/2 * (r * matr[n, j+1] + 2 * (1 - r) * matr[n, j] + r * matr[n, j - 1] - k^2 * v)
+
+        end
     else
+        if j == 1
 
-        return 1/2 * (r * matr[n, j+1] + 2 * (1 - r) * matr[n, j] + r * matr[n, j - 1] - k^2 * v)
-
+            return r * matr[n, j+1] + 2(1 - r) * matr[n, j] + r * bc_x0 - matr[n-1, j]
+    
+        elseif j == size(matr, 2)
+    
+            return r * bc_xJ + 2(1 - r) * matr[n, j] + r * matr[n, j-1] - matr[n-1, j]
+    
+        else
+    
+            return r * matr[n, j+1] + 2(1 - r) * matr[n, j] + r * matr[n, j-1] - matr[n-1, j]
+    
+        end
     end
 
 end
@@ -179,5 +195,5 @@ p1 = plot()
 for i in Base.OneTo(tsize)
     global p1 = plot(return_points(U, i), title="Wave Equation via FDM", legend=false, ylim=(- maximum(U0),maximum(U0)), color="red", annotations=((0.7, 0.9), text("Timer : $(round(i * k, digits=2))", :left, 10)))
     display(p1)
-    print("\r Loading Animation: $(i) / $(tsize)")
+    print("\r Loading Animation: (i)/(i) / (tsize)")
 end
