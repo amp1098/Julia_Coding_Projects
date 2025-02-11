@@ -113,10 +113,19 @@ function step(x, start, stop; amplitude = 1.0)
     end
 end
 
+function step_sine(x, frequency, amplitude, phase, start, stop)
+    if start < x <= stop
+        return amplitude * sin(frequency * x + phase)
+    else
+        return 0.0
+    end
+end
+
 # U0 = 0 .* X .+ 0.2
-U0 = gaussian.(X, 1 / 2, 1/30, 0.7)
-# U0 = step.(X, 0.3, 0.4; amplitude=0.2)
-# U0 = sinewave.(X, 5, 0.1, 0)
+# U0 = gaussian.(X, 1 / 2, 1/50, 0.7)
+# U0 = step.(X, 0.8, 1.2; amplitude=0.2)
+U0 = sinewave.(X, 16*pi/(xJ-x0), 0.1, 0)
+# U0 = step_sine.(X, 40, 1, 0, 0.8, 1.2)
 
 function assign_IV(matr, func)
     for i in Base.OneTo(size(matr, 2))
@@ -124,10 +133,17 @@ function assign_IV(matr, func)
     end
 end
 
-assign_IV(U, U0)
+
 
 bc_x0 = 0
 bc_xJ = 0
+
+function assign_BC(vec, val1, val2)
+    vec[1] = val1
+    vec[end] = val2
+end
+assign_BC(U0, bc_x0, bc_xJ)
+assign_IV(U, U0)
 
 # Now we tell the program how to update each row, which is the same as solving the diffeq. Basically, we're going to code in a way
 # to update each space coordinate over time based on the finite difference method. Here, "n" is a step in time and "j" is a step in space.
@@ -142,11 +158,11 @@ function fin_diff(matr, n, j)
     if n == 1
         if j == 1
 
-            return 1/2 * (r * matr[n, j+1] + 2 * (1 - r) * matr[n, j] + r * bc_x0- k^2 * v)
+            return bc_x0
 
         elseif j == size(matr, 2)
 
-            return 1/2 * (r * bc_xJ + 2 * (1 - r) * matr[n, j] + r * matr[n, j - 1]- k^2 * v)
+            return bc_xJ
 
         else
 
@@ -156,15 +172,15 @@ function fin_diff(matr, n, j)
     else
         if j == 1
 
-            return r * matr[n, j+1] + 2(1 - r) * matr[n, j] + r * bc_x0 - matr[n-1, j]
+            return bc_x0
     
         elseif j == size(matr, 2)
     
-            return r * bc_xJ + 2(1 - r) * matr[n, j] + r * matr[n, j-1] - matr[n-1, j]
+            return bc_xJ
     
         else
     
-            return r * matr[n, j+1] + 2(1 - r) * matr[n, j] + r * matr[n, j-1] - matr[n-1, j]
+            return r * matr[n, j+1] + 2(1 - r) * matr[n, j] + r * matr[n, j-1] - matr[n-1, j] - k^2 * v
     
         end
     end
@@ -191,9 +207,10 @@ end
 
 #Lastly, we animate it.
 
-p1 = plot()
+p1 = plot(size=(900, 720))
 for i in Base.OneTo(tsize)
-    global p1 = plot(return_points(U, i), title="Wave Equation via FDM", legend=false, ylim=(- maximum(U0),maximum(U0)), color="red", annotations=((0.7, 0.9), text("Timer : $(round(i * k, digits=2))", :left, 10)))
+    global p1 = plot(return_points(U, i), title="Wave Equation via FDM", legend=false, ylim=(- 1,1), color="red", size=(900, 720), annotations=((0.7, 0.9), text("Timer : $(round(i * k, digits=2))", :left, 10)))
     display(p1)
+    sleep(0.001)
     print("\r Loading Animation: (i)/(i) / (tsize)")
 end
