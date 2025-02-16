@@ -43,21 +43,21 @@ y0 = 0.0
 yL = 1.0
 y = (y0, yL)
 
-h = 0.1
+h = 0.01
 xsize = length(range(start = x0, stop = xJ, step = h))
 X = [i for i in range(start = x0, stop = xJ, step = h)]
 
-q = 0.1
+q = 0.01
 ysize = length(range(start = y0, stop = yL, step = q))
 Y = [i for i in range(start = y0, stop = yL, step = q)]
 
 # Now we repeat this for the time domain.
 
 t0 = 0.0
-tN = 0.1
+tN = 0.025
 t = (t0, tN)
 
-k = 0.001
+k = 0.00001
 tsize = length(range(start = t0, stop = tN, step = k))
 T = [i for i in range(start = t0, stop = tN, step = k)]
 
@@ -68,7 +68,11 @@ U = Array{Float64}(undef, tsize, xsize, ysize)
 
 c = 1.0
 
-print(((k * c) / (h*q))^2)
+r = ((k * c) / (h*q))^2
+
+if r > 0.5
+    throw("Warning! Numerical instability likely, r value ($(round(r, digits=2))) is above 0.5.")
+end
 
 # These are functions to help iterate through entire axes of an array. Julia doesn't directly allow me to return the axes of an array.
 
@@ -87,7 +91,7 @@ xx = [i for i in range(x[1], x[end], step=h)]
 yy = [i for i in range(x[1], x[end], step=q)]
 
 function gaussian(x,y)
-    return exp(-(3*x)^2 - (3*y)^2)
+    return exp(-(10*x)^2 - (10*y)^2)
 
 end
 
@@ -95,8 +99,8 @@ function sine(x, y)
     return sin(x * pi * x[end]) + sin(y* pi * y[end])
 end
 
-# zz = @. gaussian(xx' - (x[end] + x[1]) / 2, yy - (y[end] + y[1]) / 2)
-zz = @. sine(xx', yy)
+zz = @. gaussian(xx' - (x[end] + x[1]) / 2, yy - (y[end] + y[1]) / 2) * 5
+# zz = @. sine(xx', yy)
 
 function edge_set(matr)
     for i in size(matr, 2)
@@ -114,21 +118,19 @@ edge_set(U)
 bc_edge = 0
 
 function fin_diff(matr, n, j, l)
-
-    r = ((k * c) / (h*q))^2
     if (j == 1 || l == 1 || j == size(matr, 2) || l == size(matr, 3))
-        #println("$(n), $(j), $(l)")
+        #println("(n),(n), (j), $(l)")
         #display(return_slice(U, n))
         return bc_edge
     elseif n == 1
 
-        #println("$(n), $(j), $(l)")
+        #println("(n),(n), (j), $(l)")
         return (r/2) * (matr[n, j-1, l] + matr[n, j+1, l] - 4 *matr[n, j, l] + matr[n, j, l - 1] + matr[n, j, l + 1]) + matr[n, j, l]
 
     elseif n != 1
 
 
-        #println("$(n), $(j), $(l)")
+        #println("(n),(n), (j), $(l)")
         return (r) * (matr[n, j-1, l] + matr[n, j+1, l] - 4 *matr[n, j, l] + matr[n, j, l - 1] + matr[n, j, l + 1]) + 2 * matr[n, j, l] - matr[n - 1, j, l]
     
     else
@@ -154,11 +156,18 @@ end
 
 FDM_Solver(U)
 
+height_limit = ceil(maximum(zz))
 
-p1 = surface(size=(900, 720))
+p1 = surface(size=(900, 720), clims=(-height_limit, height_limit))
 
 for i in Base.OneTo(tsize)
-    global p1 = surface(xx, yy, reshape(U[i, :, :], length(U[i, :, :])), size=(900, 720), zlim=(-5, 5))
+    global p1 = surface(xx, yy, reshape(U[i, :, :], length(U[i, :, :])), size=(900, 720), zlim=(-height_limit, height_limit), clims=(-height_limit,height_limit))
     display(p1)
     sleep(0.01)
 end
+
+# anim = @animate for i in Base.OneTo(tsize)
+#     surface(xx, yy, reshape(U[i, :, :], length(U[i, :, :])), size=(900, 720), zlim=(-5, 5))
+# end
+
+# gif(anim, "C:\\Users\\sgtar\\Desktop\\Chase Programming\\Output\\gaussian_wave.gif", fps=30)
