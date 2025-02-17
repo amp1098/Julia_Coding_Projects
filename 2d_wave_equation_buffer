@@ -1,0 +1,131 @@
+using Plots
+using BenchmarkTools
+
+x0 = -1.0
+xJ = 1.0
+x = (x0, xJ)
+
+y0 = -1.0
+yL = 1.0
+y = (y0, yL)
+
+h = 0.01
+xsize = length(range(start = x0, stop = xJ, step = h))
+
+q = 0.01
+ysize = length(range(start = y0, stop = yL, step = q))
+
+k = 0.00001 # time step
+
+c = 1.0
+
+r = ((k * c) / (h*q))^2
+
+if r > 0.5
+    throw("Warning! Numerical instability likely, r value ($(round(r, digits=2))) is above 0.5.")
+end
+
+# initialize array
+
+U = Array{Float64}(undef, 3, xsize, ysize)
+
+xx = [i for i in range(x[1], x[end], step=h)]
+yy = [i for i in range(x[1], x[end], step=q)]
+
+function gaussian(x,y)
+    return exp(-(10*x)^2 - (10*y)^2)
+end
+
+function sine(x, y)
+    return sin((x-1/2) * pi) + sin((y-1/2)* pi)
+end
+
+zz = @. gaussian(xx' - (x[end] + x[1]) / 2, yy - (y[end] + y[1]) / 2) * 1
+
+# zz = @. sine(xx', yy)
+
+height_limit = ceil(maximum(zz))
+
+function initialize_array(matr)
+    for i in 1:3
+        matr[i, :, :] = zz
+    end
+end
+
+initialize_array(U)
+
+bc_edge = 0
+
+function fin_diff(matr, n, j, l)
+    if (j == 1 || l == 1 || j == size(matr, 2) || l == size(matr, 3))
+
+        return bc_edge
+
+    elseif n == 1
+
+        return (r/2) * (matr[n, j-1, l] + matr[n, j+1, l] - 4 *matr[n, j, l] + matr[n, j, l - 1] + matr[n, j, l + 1]) + matr[n, j, l]
+
+    elseif n != 1
+
+        return (r) * (matr[n, j-1, l] + matr[n, j+1, l] - 4 *matr[n, j, l] + matr[n, j, l - 1] + matr[n, j, l + 1]) + 2 * matr[n, j, l] - matr[n - 1, j, l]
+    
+    else
+
+        return bc_edge
+        
+    end
+
+end
+
+function FDM_Solver(matr; first=false)
+    if !first
+        for j in range(1, size(matr, 2)) # space (x)
+            for l in range(1, size(matr, 3)) # space (y)
+                matr[3, j, l] = fin_diff(matr, 2, j, l)
+            end
+        end
+    else
+        for j in range(1, size(matr, 2)) # space (x)
+            for l in range(1, size(matr, 3)) # space (y)
+                matr[2, j, l] = fin_diff(matr, 1, j, l)
+            end
+        end
+    end
+end
+
+FDM_Solver(U)
+
+function shift_array_down(matr)
+    for i in Base.OneTo(size(matr, 1))
+        if i != 1
+            matr[i - 1, :, :] = matr[i, :, :]
+        end
+    end
+end
+
+n = 0
+tmax = 20
+p1 = surface(size=(900, 720), zlim=(-height_limit, height_limit), clims=(-height_limit,height_limit), xlim=(-1,1), ylim=(-1,1))
+while n < tmax
+
+    p1 = surface(xx, yy, reshape(U[2, :, :], length(U[2, :, :])), size=(1920, 1080), zlim=(-height_limit, height_limit), xlim=(-1,1), ylim=(-1,1), clims=(-height_limit,height_limit), annotations=((0.7, 0.9, 1), text("Timer : $(n) steps; dt = $(k)", :left, 10)))
+    display(p1)
+
+    if n == 1
+        FDM_Solver(U; first=true)
+
+    elseif n == 10
+        U[3, :, :] = (0.01 .* zz) .+ U[1, :, :]
+        
+    else
+        FDM_Solver(U)
+    end
+    
+    shift_array_down(U)
+
+    global n = n + 1
+    println("$(n) out of $(tmax)")
+
+end
+
+# mp4(anim, "C:\\Users\\sgtar\\Desktop\\Chase Programming\\Output\\1000_step_buffered_gaussian_wave.mp4", fps=30)
