@@ -4,23 +4,35 @@
 
 using Plots, LinearAlgebra
 
+# Units (avoiding Unitful, too annoying to figure out)
+
+hbar = 1.055e-34 #J s
+emass = 9.109e-31 #Kg
+pmass = 1.67e-27 #Kg
+ns = 1e-9 #s
+br = 5.29e-11 #m
+
+# hm = 1 # ratio of hbar to mass
+
+hm = hbar / emass
+
 # I'll first discretize the domain.
 
 dx = 0.001
 x0 = 0.0
-J = 5.0
-x = [j for j in range(x0, J, step=dx)]
+J = 2.0
+x = br .* [j for j in range(x0, J, step=dx)]
 
-dt = 0.001
+dt = 0.01
 t0 = 0.0
-N = 1.0
-t = [n for n in range(0, N, step=dt)]
+N = 10.0
+t = ns .* [n for n in range(0, N, step=dt)]
 
 # Now I'll construct a function that defines the potential I'd like to investigate.
 
 function V(X)
-    if 1 < X < 1.1
-        return 1000
+    if 1 * br < X < 1.1 * br
+        return 1e10
     else
         return 0.0
     end
@@ -30,9 +42,9 @@ V_j = V.(x)
 
 # These are the parameters of the discrete TDSE. 
 
-α = [(im * dt)/2(dx^2) for j in range(x0, J - dx, step=dx)] # note, this has to be one element shorter than the other two to fit into the matrix
-β = 1 .+ (im * dt)/2 .* (2/(dx^2) .+ V_j)
-γ = 1 .- (im * dt)/2 .* (2/(dx^2) .+ V_j)
+α = [(im * hm * dt)/2(dx^2) for j in range(x0, J - dx, step=dx)] # note, this has to be one element shorter than the other two to fit into the matrix
+β = 1 .+ (im * hm * dt)/2 .* (2/(dx^2) .+ V_j)
+γ = 1 .- (im * hm *  dt)/2 .* (2/(dx^2) .+ V_j)
 
 # Now we construct our matrices and state vectors.
 
@@ -45,7 +57,8 @@ function gaussian(X, mean, var)
     return 1/(sqrt(2*pi*var)) * exp((-1/2) * (X - mean)^2 / var)
 end
 
-psi_0 = [gaussian(l, 1/2, 0.01) for l in x]
+
+psi_0 = [gaussian(l, 2.5e-11, 1e-25) for l in x]
 psi_0 = psi_0 / norm(psi_0)
 
 # Now we need to construct a vector that will act as psi_n+1. We are solving for this every time step.
@@ -83,11 +96,19 @@ function next_state(current_state)
     return U1\(U2*current_state)
 end
 
-buffer[1, :] = next_state(psi_0)
 p1 = plot(
-    ylim=(-0.1,0.1), 
-    size=(1000,800)
+    x,
+    abs2.(psi_0), 
+    size=(1000,1000),
+    ylim=(-0.3, 0.3),
+    label="Initial State"
     )
+
+display(p1)
+println("Press enter when you're ready to begin the simulation.")
+readline()
+buffer[1, :] = next_state(psi_0)
+
 for n in t
     # wavefunction buffer
     buffer[2,:] = next_state(buffer[1, :])
@@ -103,12 +124,15 @@ for n in t
         real(buffer[1, :]), 
         ls=:dot, 
         title="Time Dependent Schrodinger Equation (FDM)", 
-        ylim=(-0.1,0.1), 
+        ylim=(-0.3,0.3), 
         label="Real component of ψ",
-        size=(1000, 800),
+        size=(1000,1000),
         color="blue",
-        annotations=((0.7, 0.8), text("Time : $(round(n, digits=5))", :left, 10)),
-        xlabel="Spatial Domain (Unitless)",
+        annotations=[
+            ((0.7, 0.8), text("Time : $(round(n, sigdigits=3))", :left, 10)),
+            ((0.7, 0.7), text("t0, tmax, dt : (round(t[1],sigdigits=3)),(round(t[1], sigdigits=3)), (round(t[end], sigdigits=3)), $(round(dt*ns, sigdigits=3))", :left, 10))
+        ],
+        xlabel="Spatial Domain (meters)",
         ylabel="Amplitude of ψ and |ψ|^2"
         )
     p1 = plot!(
@@ -117,21 +141,19 @@ for n in t
         label="Imaginary component of ψ",
         ls=:dot,
         color="red")
-
     p1 = plot!(
         x, 
         abs2.(buffer[1, :]), 
         label="|ψ|^2",
         lw=2,
         color="black")
-    p1 = plot!(
-        x,
-        V_j,
-        label="Potential Function",
-        color="green",
-        lw=2
-    )
-    
+        p1 = plot!(
+            x,
+            V_j,
+            label="Potential Function",
+            color="green",
+            lw=2
+        )
     p1 = sticks!(
         error_buffer,
         inset=bbox(0, 0.25, 0.5, 0.1, :center),
