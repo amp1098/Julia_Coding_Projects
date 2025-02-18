@@ -1,0 +1,155 @@
+# This program will solve the 1D TDSE using the Crank-Nicholson method. I'm using work from the following paper:
+# https://static.uni-graz.at/fileadmin/_Persoenliche_Webseite/puschnig_peter/unigrazform/Theses/BachelorThesis_Wachter_2017.pdf
+# Christoph Wachter, Numerical Solution of the Time-Dependent1D-Schrodinger Equation using Absorbing Boundary Conditions (Bachelor Thesis)
+
+using Plots, LinearAlgebra
+
+# I'll first discretize the domain.
+
+dx = 0.001
+x0 = 0.0
+J = 5.0
+x = [j for j in range(x0, J, step=dx)]
+
+dt = 0.001
+t0 = 0.0
+N = 1.0
+t = [n for n in range(0, N, step=dt)]
+
+# Now I'll construct a function that defines the potential I'd like to investigate.
+
+function V(X)
+    if 1 < X < 1.1
+        return 1000
+    else
+        return 0.0
+    end
+end
+
+V_j = V.(x)
+
+# These are the parameters of the discrete TDSE. 
+
+α = [(im * dt)/2(dx^2) for j in range(x0, J - dx, step=dx)] # note, this has to be one element shorter than the other two to fit into the matrix
+β = 1 .+ (im * dt)/2 .* (2/(dx^2) .+ V_j)
+γ = 1 .- (im * dt)/2 .* (2/(dx^2) .+ V_j)
+
+# Now we construct our matrices and state vectors.
+
+U1 = Tridiagonal(.-α, β, .-α)
+U2 = Tridiagonal(α, γ, α)
+
+# We need an initial state, so I'll just use a gaussian.
+
+function gaussian(X, mean, var)
+    return 1/(sqrt(2*pi*var)) * exp((-1/2) * (X - mean)^2 / var)
+end
+
+psi_0 = [gaussian(l, 1/2, 0.01) for l in x]
+psi_0 = psi_0 / norm(psi_0)
+
+# Now we need to construct a vector that will act as psi_n+1. We are solving for this every time step.
+
+psi_n1 = similar(psi_0)
+
+# Now we can write the step to solve the first step of the Crank-Nicholson thingy.
+
+psi_n1 = U1\(U2*psi_0)
+
+# psi_n2 = U1\(U2*psi_n1)
+
+# plot(x, real(psi_0))
+# plot!(x, real(psi_n1))
+# plot!(x, real(psi_n2))
+
+# The algorithm we'll use is recursive, so we'll establish a buffer to allow for continuous calculations. This contrasts with the method
+# of preallocating space for an array of solutions, which speeds up live-animations but costs a lot of memory. We only need 2 layers in the buffer.
+
+buffer = Array{ComplexF64}(undef, 2, length(x))
+
+# It should be noted that due to the approximations made, the normalization of the wavefunction does diverge from 1.0. The rate at which
+# this "error rate" is extremely low. To plot this error over time, I can also use a buffer to store the last few (~100?) errors 
+# defined as 1 - norm(buffer[1, :]).
+
+error_buffer = zeros(100)
+
+function err(vec)
+    return 1 - norm(vec)
+end
+
+# We'll display the first layer of the buffer in plot, then update our system via the Crank-Nicholson method by solving the matrix equation.
+
+function next_state(current_state)
+    return U1\(U2*current_state)
+end
+
+buffer[1, :] = next_state(psi_0)
+p1 = plot(
+    ylim=(-0.1,0.1), 
+    size=(1000,800)
+    )
+for n in t
+    # wavefunction buffer
+    buffer[2,:] = next_state(buffer[1, :])
+
+    # error buffer
+    prepend!(error_buffer, err(buffer[1, :]))
+    deleteat!(error_buffer, 100)
+
+
+    # plotting
+    global p1 = plot(
+        x, 
+        real(buffer[1, :]), 
+        ls=:dot, 
+        title="Time Dependent Schrodinger Equation (FDM)", 
+        ylim=(-0.1,0.1), 
+        label="Real component of ψ",
+        size=(1000, 800),
+        color="blue",
+        annotations=((0.7, 0.8), text("Time : $(round(n, digits=5))", :left, 10)),
+        xlabel="Spatial Domain (Unitless)",
+        ylabel="Amplitude of ψ and |ψ|^2"
+        )
+    p1 = plot!(
+        x, 
+        imag(buffer[1, :]), 
+        label="Imaginary component of ψ",
+        ls=:dot,
+        color="red")
+
+    p1 = plot!(
+        x, 
+        abs2.(buffer[1, :]), 
+        label="|ψ|^2",
+        lw=2,
+        color="black")
+    p1 = plot!(
+        x,
+        V_j,
+        label="Potential Function",
+        color="green",
+        lw=2
+    )
+    
+    p1 = sticks!(
+        error_buffer,
+        inset=bbox(0, 0.25, 0.5, 0.1, :center),
+        yticks=[-round(maximum(abs.(error_buffer)), sigdigits=2), round(maximum(abs.(error_buffer)), sigdigits=2)],
+        xticks=nothing,
+        ylim=(-round(maximum(abs.(error_buffer)), sigdigits=2), round(maximum(abs.(error_buffer)), sigdigits=2)),
+        legend=false,
+        subplot=2,
+        title="Normalization Error",
+        annotations=((0.7, 0.2), text("Maximum : $(round(maximum(abs.(error_buffer)), sigdigits=2))", :left, 10)),
+        )
+    display(p1)
+
+    # updating wavefunction buffer
+    buffer[1,:] = buffer[2, :]
+
+    # waiting before going through loop again
+    sleep(0.01)
+end
+
+
