@@ -1,0 +1,190 @@
+# This program will solve the 1D TDSE using the Crank-Nicholson method. I'm using work from the following paper:
+# https://static.uni-graz.at/fileadmin/_Persoenliche_Webseite/puschnig_peter/unigrazform/Theses/BachelorThesis_Wachter_2017.pdf
+# Christoph Wachter, Numerical Solution of the Time-Dependent1D-Schrodinger Equation using Absorbing Boundary Conditions (Bachelor Thesis)
+
+using Plots, LinearAlgebra, QuadGK, FFTW
+
+# Units (avoiding Unitful, too annoying to figure out)
+
+hbar = 1.055e-34 #J s
+emass = 9.109e-31 #Kg
+pmass = 1.67e-27 #Kg
+ns = 1e-9 #s
+br = 5.29e-11 #m
+
+# hm = 1 # ratio of hbar to mass
+
+hm = hbar / emass
+
+# I'll first discretize the domain.
+
+dx = 0.001
+x0 = -2.0
+J = 2.0
+x = [j for j in range(x0, J, step=dx)]
+
+dt = 0.1
+t0 = 0.0
+N = 1500
+t = [n for n in range(0, N, step=dt)]
+
+# Now I'll construct a function that defines the potential I'd like to investigate.
+
+function V(X)
+    if X > 0
+        return 1/2 * X^2
+    else
+        if -1 < X < -0.5
+            return 10
+        else
+            return 0
+        end
+    end
+end
+
+V_j = V.(x)
+
+# These are the parameters of the discrete TDSE. 
+
+potential_scale = 1e4
+
+α = [(im * hm * dt)/2(dx^2) for j in range(x0, J - dx, step=dx)] # note, this has to be one element shorter than the other two to fit into the matrix
+β = 1 .+ (im * hm * dt)/2 .* (2/(dx^2) .+ potential_scale .* V_j)
+γ = 1 .- (im * hm *  dt)/2 .* (2/(dx^2) .+ potential_scale .* V_j)
+
+# Now we construct our matrices and state vectors.
+
+U1 = Tridiagonal(.-α, β, .-α)
+U2 = Tridiagonal(α, γ, α)
+
+# We need an initial state, so I'll just use a gaussian.
+
+function gaussian(x; mean = 0, var = 1)
+    if var == 0
+        throw("Variance of a gaussian cannot be 0. Try a Dirac Delta instead.")
+    else
+        return 1 / (sqrt(var*pi)) * exp(-(((x - mean))^2 / var))
+    end
+end
+
+function normalizer(func::Function, vector_domain; kwargs...)
+    integral, error = quadgk(q -> abs2(func(q; kwargs...)), -Inf, Inf)
+    func.(vector_domain; kwargs...) / integral
+end
+
+psi_0 = normalizer(gaussian, x; mean = 0.2, var = 1e-2)
+
+# Now we need to construct a vector that will act as psi_n+1. We are solving for this every time step.
+
+psi_n1 = similar(psi_0)
+
+# Now we can write the step to solve the first step of the Crank-Nicholson thingy.
+
+psi_n1 = U1\(U2*psi_0)
+
+# The algorithm we'll use is recursive, so we'll establish a buffer to allow for continuous calculations. This contrasts with the method
+# of preallocating space for an array of solutions, which speeds up live-animations but costs a lot of memory. We only need 2 layers in the buffer.
+
+buffer = Array{ComplexF64}(undef, 2, length(x))
+
+# We'll display the first layer of the buffer in plot, then update our system via the Crank-Nicholson method by solving the matrix equation.
+
+function next_state(current_state)
+    return U1\(U2*current_state)
+end
+
+size_tup = (1080, 720)
+
+p1 = plot(
+    x,
+    real(psi_0),
+    imag(psi_0),
+    xlim=(-2, 2),
+    size=size_tup,
+    ylim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+    zlim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+    xlabel="Position",
+    ylabel="Real Part",
+    zlabel="Imaginary Part",
+    label="Initial State",
+    line_z=abs2.(psi_0);
+    proj_type = :persp
+    )
+p1 = plot!(
+    x,
+    0 .* x,
+    V_j,
+    label="Potential Function",
+    color="green",
+    lw=2,
+    opacity=0.2;
+    proj_type = :persp
+)
+
+display(p1)
+println("Press enter when you're ready to begin the simulation.")
+readline()
+buffer[1, :] = psi_0
+
+
+for n in t
+    println("$(round(n / dt)) out of $(length(t))")
+    # wavefunction buffer
+    buffer[2,:] = next_state(buffer[1, :])
+
+    # if n / dt == 170
+    #     io = open("C://Users//sgtar//Desktop//Chase Programming//Output//myfile.txt", "w")
+
+    #     println(io, buffer[1, :])
+    #     close(io)
+    # end
+
+    wavefunction = buffer[1, :]
+
+    wavefunction_length = length(wavefunction)
+
+    #pos_data = plot(x, wavefunction, title="Positional");
+
+    F = fftshift(fft(real(wavefunction)))
+    freqs = fftshift(fftfreq(length(wavefunction), 1/dx * 2 * pi))
+
+    freq_data = plot(freqs, abs.(F), title="Frequency", xlim=(0,600), ylim=(0,300))
+
+    # plotting
+    global p1 = plot(
+        x, 
+        real(wavefunction),
+        imag(wavefunction),
+        title="Time Dependent Schrodinger Equation (FDM)", 
+        xlim=(-2, 2),
+        ylim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+        zlim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+        label="ψ (real and imaginary)",
+        size=size_tup,
+        annotations=[
+            ((0.7, 0.8, 0.1), text("Time : $(round(n, sigdigits=3))", :left, 10)),
+            ((0.7, 0.7, 0.1), text("t0, tmax, dt : (round(t[1],sigdigits=3)),(round(t[1], sigdigits=3)), (round(t[end], sigdigits=3)), $(round(dt, sigdigits=3))", :left, 10))
+        ],
+        xlabel="Spatial Domain (Units Unspecified)",
+        ylabel="Amplitude of ψ and |ψ|^2",
+        color="black",
+        proj_type = :persp
+        )
+    p1 = plot!(
+        x,
+        0 .* x,
+        V_j,
+        label="Potential Function",
+        color="green",
+        lw=2,
+        opacity=0.2;
+        proj_type = :persp
+    )
+    
+    display(plot(p1, freq_data, layout = 2))
+
+    # updating wavefunction buffer
+    buffer[1,:] = buffer[2, :]
+
+    # waiting before going through loop again
+end
