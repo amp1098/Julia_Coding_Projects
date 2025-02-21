@@ -1,56 +1,53 @@
 # This program will solve the 1D TDSE using the Crank-Nicholson method. I'm using work from the following paper:
 # https://static.uni-graz.at/fileadmin/_Persoenliche_Webseite/puschnig_peter/unigrazform/Theses/BachelorThesis_Wachter_2017.pdf
 # Christoph Wachter, Numerical Solution of the Time-Dependent1D-Schrodinger Equation using Absorbing Boundary Conditions (Bachelor Thesis)
+# The only thing I used the paper is to help with understanding what exactly the Crank-Nicholson method is regarding the TDSE.
 
-using Plots, LinearAlgebra, QuadGK, FFTW
-
-# Units (avoiding Unitful, too annoying to figure out)
-
-hbar = 1.055e-34 #J s
-emass = 9.109e-31 #Kg
-pmass = 1.67e-27 #Kg
-ns = 1e-9 #s
-br = 5.29e-11 #m
-
-# hm = 1 # ratio of hbar to mass
-
-hm = hbar / emass
+using Plots, LinearAlgebra, QuadGK, FFTW, BenchmarkTools
 
 # I'll first discretize the domain.
 
-dx = 0.001
+dx = 0.0001
 x0 = -2.0
 J = 2.0
 x = [j for j in range(x0, J, step=dx)]
 
-dt = 0.1
+dt = 0.0001
 t0 = 0.0
-N = 1500
+N = 0.03
 t = [n for n in range(0, N, step=dt)]
 
 # Now I'll construct a function that defines the potential I'd like to investigate.
 
 function V(X)
-    if X > 0
-        return 1/2 * X^2
+
+    if -1.3 < X < -1.1 || 1.1 < X < 1.3
+
+        return 10
+
     else
-        if -1 < X < -0.5
-            return 10
-        else
-            return 0
-        end
+
+        return 0
+
     end
+
 end
 
-V_j = V.(x)
+function broadcast_and_scale_potential(poten, X; scale = 1)
 
-# These are the parameters of the discrete TDSE. 
+    poten = @. poten(X) * scale
 
-potential_scale = 1e4
+    return poten
 
-α = [(im * hm * dt)/2(dx^2) for j in range(x0, J - dx, step=dx)] # note, this has to be one element shorter than the other two to fit into the matrix
-β = 1 .+ (im * hm * dt)/2 .* (2/(dx^2) .+ potential_scale .* V_j)
-γ = 1 .- (im * hm *  dt)/2 .* (2/(dx^2) .+ potential_scale .* V_j)
+end
+
+V_j = broadcast_and_scale_potential(V, x; scale=1e3)
+
+# These are the parameters of the discrete TDSE. We assume that hbar / m = 1, which is physically silly but since I'm ignoring units it doesn't matter.
+
+α = [(im * dt)/2(dx^2) for j in range(x0, J - dx, step=dx)] # note, this has to be one element shorter than the other two to fit into the matrix
+β = 1 .+ (im * dt)/2 .* (2/(dx^2) .+ V_j)
+γ = 1 .- (im *  dt)/2 .* (2/(dx^2) .+ V_j)
 
 # Now we construct our matrices and state vectors.
 
@@ -60,25 +57,56 @@ U2 = Tridiagonal(α, γ, α)
 # We need an initial state, so I'll just use a gaussian.
 
 function gaussian(x; mean = 0, var = 1)
+
     if var == 0
+
         throw("Variance of a gaussian cannot be 0. Try a Dirac Delta instead.")
+
     else
+
         return 1 / (sqrt(var*pi)) * exp(-(((x - mean))^2 / var))
+
     end
+
+end
+
+function sine(X; frequency = 1, phase = 0)
+    
+    if frequency == 0
+
+        throw("Cannot plot a sine wave with 0 frequency.")
+
+    else
+
+        if -0.5 < X < 0.5
+
+            return 1/2 * sin(frequency * 2 * pi * X)
+
+        else
+            
+            return 0
+
+        end
+
+    end
+
 end
 
 function normalizer(func::Function, vector_domain; kwargs...)
+
     integral, error = quadgk(q -> abs2(func(q; kwargs...)), -Inf, Inf)
+
     func.(vector_domain; kwargs...) / integral
+
 end
 
-psi_0 = normalizer(gaussian, x; mean = 0.2, var = 1e-2)
+psi_0 = normalizer(sine, x; frequency = 4, phase = 0)
 
 # Now we need to construct a vector that will act as psi_n+1. We are solving for this every time step.
 
 psi_n1 = similar(psi_0)
 
-# Now we can write the step to solve the first step of the Crank-Nicholson thingy.
+# Now we can write the step to solve the first step of the Crank-Nicholson method.
 
 psi_n1 = U1\(U2*psi_0)
 
@@ -90,101 +118,160 @@ buffer = Array{ComplexF64}(undef, 2, length(x))
 # We'll display the first layer of the buffer in plot, then update our system via the Crank-Nicholson method by solving the matrix equation.
 
 function next_state(current_state)
+
     return U1\(U2*current_state)
+
 end
 
-size_tup = (1080, 720)
+size_tuple = (1920, 1080)
 
-p1 = plot(
-    x,
-    real(psi_0),
-    imag(psi_0),
-    xlim=(-2, 2),
-    size=size_tup,
-    ylim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
-    zlim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
-    xlabel="Position",
-    ylabel="Real Part",
-    zlabel="Imaginary Part",
-    label="Initial State",
-    line_z=abs2.(psi_0);
-    proj_type = :persp
-    )
-p1 = plot!(
-    x,
-    0 .* x,
-    V_j,
-    label="Potential Function",
-    color="green",
-    lw=2,
-    opacity=0.2;
-    proj_type = :persp
-)
-
-display(p1)
 println("Press enter when you're ready to begin the simulation.")
 readline()
 buffer[1, :] = psi_0
 
+function show_window(;animate=false)
+    if !animate
+        for n in t
+            println("$(n / (dt)) out of $(length(t))")
+            # wavefunction buffer
+            buffer[2,:] = next_state(buffer[1, :])
 
-for n in t
-    println("$(round(n / dt)) out of $(length(t))")
-    # wavefunction buffer
-    buffer[2,:] = next_state(buffer[1, :])
+            wavefunction = buffer[1, :]
 
-    # if n / dt == 170
-    #     io = open("C://Users//sgtar//Desktop//Chase Programming//Output//myfile.txt", "w")
+            wavefunction_length = length(wavefunction)
 
-    #     println(io, buffer[1, :])
-    #     close(io)
-    # end
+            F = fftshift(fft(real(wavefunction)))
+            freqs = fftshift(fftfreq(length(wavefunction), 1/dx * 2 * pi))
 
-    wavefunction = buffer[1, :]
+            freq_data = plot(
+                freqs, 
+                abs.(F), 
+                title="FFT of real(ψ)", 
+                xlim=(0,500), 
+                ylim=(0,3e4),
+                color="black",
+                legend=false
+                )
 
-    wavefunction_length = length(wavefunction)
+            # plotting
+            total_plot = plot(
+                x, 
+                real(wavefunction),
+                imag(wavefunction),
+                title="Time Dependent Schrodinger Equation (FDM)\nt=$(round(n, sigdigits=4))\ndt=$(round(dt, sigdigits=3))", 
+                xlim=(-2, 2),
+                ylim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+                zlim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+                label="ψ (real and imaginary)",
+                size=size_tuple,
+                xlabel="Position",
+                color="black";
+                view_angle=(mod(n / (2 * dt), 360), 30),
+                proj_type = :persp
+                )
+            total_plot = plot!(
+                x,
+                0 .* x,
+                V.(x),
+                label="Potential Function",
+                color="green",
+                lw=2,
+                opacity=0.2;
+                proj_type = :persp
+            )
+            total_plot = plot!(
+                x,
+                0 .* x,
+                abs2.(wavefunction),
+                color="pink",
+                label="|ψ|^2",
+                ls=:dot,
+                lw=3
+            )
+            
+            display(plot(total_plot, freq_data, layout = grid(2, 1, heights=[0.8, 0.2])))
 
-    #pos_data = plot(x, wavefunction, title="Positional");
+            # updating wavefunction buffer
+            buffer[1,:] = buffer[2, :]
 
-    F = fftshift(fft(real(wavefunction)))
-    freqs = fftshift(fftfreq(length(wavefunction), 1/dx * 2 * pi))
+            sleep(0.01)
+        end
+    else
+        @animate for n in t
+            println("$(n / (dt)) out of $(length(t))")
+            # wavefunction buffer
+            buffer[2,:] = next_state(buffer[1, :])
 
-    freq_data = plot(freqs, abs.(F), title="Frequency", xlim=(0,600), ylim=(0,300))
+            wavefunction = buffer[1, :]
 
-    # plotting
-    global p1 = plot(
-        x, 
-        real(wavefunction),
-        imag(wavefunction),
-        title="Time Dependent Schrodinger Equation (FDM)", 
-        xlim=(-2, 2),
-        ylim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
-        zlim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
-        label="ψ (real and imaginary)",
-        size=size_tup,
-        annotations=[
-            ((0.7, 0.8, 0.1), text("Time : $(round(n, sigdigits=3))", :left, 10)),
-            ((0.7, 0.7, 0.1), text("t0, tmax, dt : (round(t[1],sigdigits=3)),(round(t[1], sigdigits=3)), (round(t[end], sigdigits=3)), $(round(dt, sigdigits=3))", :left, 10))
-        ],
-        xlabel="Spatial Domain (Units Unspecified)",
-        ylabel="Amplitude of ψ and |ψ|^2",
-        color="black",
-        proj_type = :persp
-        )
-    p1 = plot!(
-        x,
-        0 .* x,
-        V_j,
-        label="Potential Function",
-        color="green",
-        lw=2,
-        opacity=0.2;
-        proj_type = :persp
-    )
-    
-    display(plot(p1, freq_data, layout = 2))
+            wavefunction_length = length(wavefunction)
 
-    # updating wavefunction buffer
-    buffer[1,:] = buffer[2, :]
+            F = fftshift(fft(real(wavefunction)))
+            freqs = fftshift(fftfreq(length(wavefunction), 1/dx * 2 * pi))
 
-    # waiting before going through loop again
+            freq_data = plot(
+                freqs, 
+                abs.(F), 
+                title="FFT of real(ψ)", 
+                xlim=(0,500), 
+                ylim=(0,3e4),
+                color="black",
+                legend=false
+                )
+
+            # plotting
+            total_plot = plot(
+                x, 
+                real(wavefunction),
+                imag(wavefunction),
+                title="Time Dependent Schrodinger Equation (FDM)\nt=(round(n,sigdigits=4))\ndt=(round(n, sigdigits=4))\ndt=(round(dt, sigdigits=3))", 
+                xlim=(-2, 2),
+                ylim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+                zlim=(-maximum(abs2.(psi_0)), maximum(abs2.(psi_0))),
+                label="ψ (real and imaginary)",
+                size=size_tuple,
+                xlabel="Position",
+                color="black";
+                view_angle=(mod(n / (2 * dt), 360), 30),
+                proj_type = :persp
+                )
+            total_plot = plot!(
+                x,
+                0 .* x,
+                V.(x),
+                label="Potential Function",
+                color="green",
+                lw=2,
+                opacity=0.2;
+                proj_type = :persp
+            )
+            total_plot = plot!(
+                x,
+                0 .* x,
+                abs2.(wavefunction),
+                color="pink",
+                label="|ψ|^2",
+                ls=:dot,
+                lw=3
+            )
+
+            # updating wavefunction buffer
+            buffer[1,:] = buffer[2, :]
+        end
+    end
+end
+println("1 to show animation, 2 to save it.")
+input = readline()
+
+if input == "1"
+
+    show_window(animate=false)
+
+elseif input == "2"
+
+    anim = show_window(animate=true)
+
+    gif(anim, "C:\\Users\\sgtar\\Desktop\\Chase Programming\\Output\\3D_TDSE_V3.gif", fps=24)
+    mov(anim, "C:\\Users\\sgtar\\Desktop\\Chase Programming\\Output\\3D_TDSE_V3.mov", fps=24)
+
 end
